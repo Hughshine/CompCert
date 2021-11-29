@@ -353,19 +353,19 @@ Qed.
 Lemma propagate_succ_charact:
   forall st out n,
   let st' := propagate_succ st out n in
-     optge st'.(aval)!n (Some out)
-  /\ (forall s, n <> s -> st'.(aval)!s = st.(aval)!s)
-  /\ (forall s, optge st'.(aval)!s st.(aval)!s)
-  /\ (NS.In n st'.(worklist) \/ st'.(aval)!n = st.(aval)!n)
-  /\ (forall n', NS.In n' st.(worklist) -> NS.In n' st'.(worklist))
-  /\ (forall n', NS.In n' st'.(worklist) -> n' = n \/ NS.In n' st.(worklist))
-  /\ (forall n', st.(visited) n' -> st'.(visited) n')
-  /\ (forall n', st'.(visited) n' -> NS.In n' st'.(worklist) \/ st.(visited) n')
-  /\ (forall n', st.(aval)!n' = None -> st'.(aval)!n' <> None -> st'.(visited) n').
+     optge st'.(aval)!n (Some out)  (** 这个程序点的AI单调（相对于一个前驱的out） *)
+  /\ (forall s, n <> s -> st'.(aval)!s = st.(aval)!s)  (** 只影响这一个节点 *)
+  /\ (forall s, optge st'.(aval)!s st.(aval)!s) (** 每个程序点的AI单调（相对于它以前） *)
+  /\ (NS.In n st'.(worklist) \/ st'.(aval)!n = st.(aval)!n) (** 这个节点或者在worklist，或者它没有发生改变 *)
+  /\ (forall n', NS.In n' st.(worklist) -> NS.In n' st'.(worklist)) (** 之前在worklist中的节点，之后仍然在（这一步不会缩小worklist） *)
+  /\ (forall n', NS.In n' st'.(worklist) -> n' = n \/ NS.In n' st.(worklist))  (** 新的worklist中的节点，或者是之前在的节点，或者是这个新加入的后继 *)
+  /\ (forall n', st.(visited) n' -> st'.(visited) n') (** 旧状态的visited项，被保持 *)
+  /\ (forall n', st'.(visited) n' -> NS.In n' st'.(worklist) \/ st.(visited) n')  (** 新状态的visited项中包含的节点，或者是旧状态就记录被访问的，或者是在worklist中，未来会被访问 *)
+  /\ (forall n', st.(aval)!n' = None -> st'.(aval)!n' <> None -> st'.(visited) n'). (** 若产生了新的分析结果（之前未初始化），那么新的状态一定记录了对这个程序点有访问 *)
 Proof.
   unfold propagate_succ; intros; simpl.
   destruct st.(aval)!n as [v|] eqn:E;
-  [predSpec L.beq L.beq_correct v (L.lub v out) | idtac].
+  [predSpec L.beq L.beq_correct v (L.lub v out) | idtac].  (** 这两句话在做什么 *)
 - (* already there, unchanged *)
   repeat split; intros.
   + rewrite E. constructor. eapply L.ge_trans. apply L.ge_refl. apply H; auto. apply L.ge_lub_right.
@@ -407,15 +407,24 @@ Qed.
 Lemma propagate_succ_list_charact:
   forall out l st,
   let st' := propagate_succ_list st out l in
-     (forall n, In n l -> optge st'.(aval)!n (Some out))
+     (forall n, In n l -> optge st'.(aval)!n (Some out))  
+    (** 对于迭代的所有后继，它的分析结果都比前驱的out要大 *)
   /\ (forall n, ~In n l -> st'.(aval)!n = st.(aval)!n)
+    (** 对于不在后继list中的节点，前后的分析结果一致 *)
   /\ (forall n, optge st'.(aval)!n st.(aval)!n)
+    (** 每个程序点的AI单调 *)
   /\ (forall n, NS.In n st'.(worklist) \/ st'.(aval)!n = st.(aval)!n)
+    (** 每个程序点，它或者在worklist中，或者它的值没有改变 *)
   /\ (forall n', NS.In n' st.(worklist) -> NS.In n' st'.(worklist))
+    (** 如果一个节点之前在worklist中，那它之后也在worklist中 -- 这一步未缩小work list *)
   /\ (forall n', NS.In n' st'.(worklist) -> In n' l \/ NS.In n' st.(worklist))
+    (** 如果一个节点结果的worklist中，那意味着它或者是succs中的节点，或者之前就在worklist *)
   /\ (forall n', st.(visited) n' -> st'.(visited) n')
+    (** 之前访问过的，之后也访问过 *)
   /\ (forall n', st'.(visited) n' -> NS.In n' st'.(worklist) \/ st.(visited) n')
+    (** 之后有访问标记的节点，意味着它或者之前访问过，或者在结果的worklist中，会在未来被访问*)
   /\ (forall n', st.(aval)!n' = None -> st'.(aval)!n' <> None -> st'.(visited) n').
+    (** 这一轮结果更新过的（之前是undefine）的节点，它一定被置上了访问标记 *)
 Proof.
   induction l; simpl; intros.
 - repeat split; intros.
@@ -455,11 +464,11 @@ Qed.
 
 (** Characterization of [fixpoint_from]. *)
 
-Inductive steps: state -> state -> Prop :=
+Inductive steps: state -> state -> Prop := (** step -> steps *)
   | steps_base: forall s, steps s s
   | steps_right: forall s1 s2 s3, steps s1 s2 -> step s2 = inr s3 -> steps s1 s3.
 
-Scheme steps_ind := Induction for steps Sort Prop.
+Scheme steps_ind := Induction for steps Sort Prop.  (** 这一步和Coq进行自动化推理的机制有关，需要看CoqArt中这部分，TODO*)
 
 Lemma fixpoint_from_charact:
   forall start res,
@@ -487,7 +496,8 @@ evolve monotonically:
   increase with respect to the [optge] ordering;
 - every node visited in the past remains visited in the future.
 *)
-
+(** 前面说明了终止性，现在要分析关于格的单调性 *)
+(** 1. 单步step的单调性 *)
 Lemma step_incr:
   forall n s1 s2, step s1 = inr s2 ->
   optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n).
@@ -507,6 +517,7 @@ Proof.
   + split. apply optge_refl. auto.
 Qed.
 
+(** 2. 多步steps的单调性 *)
 Lemma steps_incr:
   forall n s1 s2, steps s1 s2 ->
   optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n).
@@ -518,7 +529,9 @@ Proof.
 Qed.
 
 (** ** Correctness invariant *)
-
+(** 现在可以讨论正确性的build block，
+    —— 这个迭代算法，怎么与定义的结果inequation联系起来的：
+    worklist中的entry是所有的访问了的，但还没有达成正确性结果等式的那些节点（每个状态都是goodstate） *)
 (** The following invariant is preserved at each iteration of Kildall's
   algorithm: for all visited program point [n], either
   [n] is in the worklist, or the inequations associated with [n]
@@ -541,7 +554,7 @@ Record good_state (st: state) : Prop := {
 }.
 
 (** We show that the [step] function preserves this invariant. *)
-
+(** step维持good_state invariant *)
 Lemma step_state_good:
   forall st pc rem instr,
   NS.pick st.(worklist) = Some (pc, rem) ->
@@ -599,6 +612,7 @@ Proof.
   eapply GOOD2; eauto.
 Qed.
 
+(** 那么多步steps也就自然维持该性质了 *)
 Lemma steps_state_good:
   forall st1 st2, steps st1 st2 -> good_state st1 -> good_state st2.
 Proof.
@@ -612,7 +626,7 @@ Proof.
 Qed.
 
 (** We show that initial states satisfy the invariant. *)
-
+(** 说明起始状态满足good step*)
 Lemma start_state_good:
   forall enode eval, good_state (start_state enode eval).
 Proof.
@@ -639,10 +653,12 @@ Proof.
 Qed.
 
 (** Reachability in final states. *)
-
+Check reachable.
 Lemma reachable_visited:
   forall st, good_state st -> NS.pick st.(worklist) = None ->
+  (** 对于每一个worklist为空的goodstate *)
   forall p q, reachable code successors p q -> st.(visited) p -> st.(visited) q.
+  (** 如果p can reach q；那么如果p会被访问到，q一定会被访问到 *)
 Proof.
   intros st [GOOD1 GOOD2] PICK. induction 1; intros.
 - auto.
@@ -657,7 +673,8 @@ Qed.
 (** As a consequence of the [good_state] invariant, the result of
   [fixpoint], if defined, is a solution of the dataflow inequations.
   This assumes that the transfer function maps [L.bot] to [L.bot]. *)
-
+(** 此时，根据前面每个算法子结构性质的证明，可以说明完整算法的性质了 *)
+(** goodstate中worklist entry的含义 => 结果worklist为空 => 结果满足fixpoint inequation *)
 Theorem fixpoint_solution:
   forall ep ev res n instr s,
   fixpoint ep ev = Some res ->
@@ -737,7 +754,7 @@ Proof.
 Qed.
 
 (** ** Preservation of a property over solutions *)
-
+(** 这个还得再理解下... TODO *)
 Theorem fixpoint_invariant:
   forall ep ev
     (P: L.t -> Prop)
