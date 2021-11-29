@@ -544,10 +544,15 @@ Qed.
 
 Record good_state (st: state) : Prop := {
   gs_stable: forall n,
-    st.(visited) n ->
-    NS.In n st.(worklist) \/
-    (forall i s,
+    st.(visited) n -> 
+    (** 对于每个已经访问过的结点n *)
+    NS.In n st.(worklist) \/ 
+    (** 它或者在worklist中 *)
+    (forall i s, 
      code!n = Some i -> In s (successors i) ->
+    (** 若不在worklist中，则它的每个后继都和它都有inequation关系，
+        即，ge In(s) Out(n) 
+    *)
      optge st.(aval)!s (Some (transf n (abstr_value n st))));
   gs_defined: forall n v,
     st.(aval)!n = Some v -> st.(visited) n
@@ -678,20 +683,32 @@ Qed.
 Theorem fixpoint_solution:
   forall ep ev res n instr s,
   fixpoint ep ev = Some res ->
+  (** 算法最后的结果res *)
   code!n = Some instr ->
   In s (successors instr) ->
-  (forall n, L.eq (transf n L.bot) L.bot) ->
+  (** 关于每一个结点n和它的后继s *)
+  (forall n, L.eq (transf n L.bot) L.bot) ->  (** 这一条其实不太理解 *)
   L.ge res!!s (transf n res!!n).
+  (** 都有inequation关系 *)
 Proof.
   unfold fixpoint; intros.
   exploit fixpoint_from_charact; eauto. intros (st & STEPS & PICK & RES).
-  exploit steps_state_good; eauto. apply start_state_good. intros [GOOD1 GOOD2].
-  rewrite RES; unfold PMap.get; simpl.
-  destruct st.(aval)!n as [v|] eqn:STN.
-- destruct (GOOD1 n) as [P|P]; eauto.
-  eelim NS.pick_none; eauto.
-  exploit P; eauto. unfold abstr_value; rewrite STN. intros OGE; inv OGE. auto.
-- apply L.ge_trans with L.bot. apply L.ge_bot. apply L.ge_refl. apply L.eq_sym. eauto.
+  exploit steps_state_good; eauto. apply start_state_good.  intros [GOOD1 GOOD2]. (** 把所有已知条件、定理应用，展开 *)
+  (** 只需要证inequation: L.ge res !! s (transf n res !! n) *)
+  rewrite RES; unfold PMap.get; simpl.  (** res表示转换，PMap -> PTree *)
+  destruct st.(aval)!n as [v|] eqn:STN.  (** 对n点分析结果直接分类讨论，（其实应该一定存在这一点的结果的？），如果该点结果存在，直接拿出来，如果不存在，用L.bot作为默认；讨论两个分支 *)
+- (** n有分析结果v *)
+  destruct (GOOD1 n) as [P|P]. eauto.  (** case analysis on (GOOD1 n) *)
+  { (** 如果结点n在worklist中 *)
+    (** 应该是想说明终止了的程序，worklist一定为空？然后关闭这个分支？TODO *) 
+    eelim NS.pick_none; eauto. 
+  }
+  {
+    (** 结点n不在worklist中，根据goodstate定义，直接就过了 *)
+    exploit P; eauto. unfold abstr_value; rewrite STN. intros OGE; inv OGE. auto.
+  }
+- (** n没有分析结果，qe成立也是显然的 *)
+  apply L.ge_trans with L.bot. apply L.ge_bot. apply L.ge_refl. apply L.eq_sym. eauto.
 Qed.
 
 (** Moreover, the result of [fixpoint], if defined, satisfies the additional
