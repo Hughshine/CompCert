@@ -267,12 +267,12 @@ Fixpoint propagate_succ_list (s: state) (out: L.t) (succs: list positive)
 Definition step (s: state) : PMap.t L.t + state :=
   match NS.pick s.(worklist) with
   | None =>
-      inl _ (L.bot, s.(aval))
+      inl _ (L.bot, s.(aval)) (** 由PTree构造PMap, 后者比前者就差一个default... *)
   | Some(n, rem) =>
       match code!n with
-      | None =>
+      | None => (** 就当作这个node不在，不应该走这个分支 *)
           inr _ {| aval := s.(aval); worklist := rem; visited := s.(visited) |}
-      | Some instr =>
+      | Some instr => (** *)
           inr _ (propagate_succ_list
                   {| aval := s.(aval); worklist := rem; visited := s.(visited) |}
                   (transf n (abstr_value n s))
