@@ -20,7 +20,9 @@ Require Import Lattice.
 (* To avoid useless definitions of inductors in extracted code. *)
 Local Unset Elimination Schemes.
 Local Unset Case Analysis Schemes.
-
+(** 
+   Transfer function 在这个证明里有什么地位？Transfer function的性质？
+*)
 (** A forward dataflow problem is a set of inequations of the form
 - [X(s) >= transf n X(n)]
   if program point [s] is a successor of program point [n]
@@ -122,7 +124,7 @@ End DATAFLOW_SOLVER.
   For now, we parameterize the dataflow solver over a module
   that implements sets of CFG nodes. *)
 
-Module Type NODE_SET.
+Module Type NODE_SET. (** pick 的方式由 NODESET 自行决定，它并不影响正确性，只影响效率*)
 
   Parameter t: Type.
   Parameter empty: t.
@@ -197,7 +199,7 @@ Variable transf: positive -> L.t -> L.t.
 - [aval]: A mapping from program points to values of type [L.t] representing
   the candidate solution found so far.
 - [worklist]: A worklist of program points that remain to be considered.
-- [visited]: A set of program points that were visited already
+- [visited]: A set of program points that were visited already (** TODO: visited 这里究竟在证明中起到什么作用？ *)
   (i.e. put on the worklist at some point in the past).
 
 Only the first two components are computationally relevant.  The third
@@ -209,12 +211,22 @@ erased during program extraction.
 Record state : Type :=
   mkstate { aval: PTree.t L.t; worklist: NS.t; visited: positive -> Prop }.
 
+(** TODO: 取结果可能取到空，究竟意味着什么？ 对证明来说，这部分信息的缺失，从何种角度不影响最终的正确性？*)
 Definition abstr_value (n: positive) (s: state) : L.t :=
   match s.(aval)!n with
   | None => L.bot
   | Some v => v
   end.
-
+(** TODO: 不同定理对最终的正确性究竟的贡献是什么？ 为什么要这么拆解？ *)
+(** TODO: transf function在solver的正确性中究竟有何种意义？
+    如果我要改成block based：
+    1. 我要提供什么形式的结果？
+    2. transf function 需要如何调整？ 需要满足什么？
+    3. 似乎有两种处理方案，
+      1. solver出来的结果直接就带有block中每个inst的结果
+      2. solver出来的结果只有每个block的out（in？），需要再过一遍transfer
+    * 我会需要transf具有一些额外的性质吗
+*)
 (** Kildall's algorithm, in pseudo-code, is as follows:
 <<
     while worklist is not empty, do
@@ -474,7 +486,7 @@ Lemma fixpoint_from_charact:
   forall start res,
   fixpoint_from start = Some res ->
   exists st, steps start st /\ NS.pick st.(worklist) = None /\ res = (L.bot, st.(aval)).
-Proof.
+Proof. 
   unfold fixpoint; intros.
   eapply (PrimIter.iterate_prop _ _ step
               (fun st => steps start st)
@@ -496,11 +508,13 @@ evolve monotonically:
   increase with respect to the [optge] ordering;
 - every node visited in the past remains visited in the future.
 *)
-(** 前面说明了终止性，现在要分析关于格的单调性 *)
+(** 前面说明了若算法终止得到结果，那么最终结果（和最后一个状态）的性质：
+    通过steps start得到了这个最后状态，它的worklist为空，res来源于这个状态的分析结果。【描述了开始状态和最终状态的样子】
+    现在要尝试建立两者间的关系（主要是（每一个fact）分析结果的evolve）：通过说明step的性质 *)
 (** 1. 单步step的单调性 *)
 Lemma step_incr:
   forall n s1 s2, step s1 = inr s2 ->
-  optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n).
+  optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n). (** aval 一定会变大*)
 Proof.
   unfold step; intros.
   destruct (NS.pick (worklist s1)) as [[p rem] | ]; try discriminate.
@@ -517,8 +531,8 @@ Proof.
   + split. apply optge_refl. auto.
 Qed.
 
-(** 2. 多步steps的单调性 *)
-Lemma steps_incr:
+(** 2. 多步steps的单调性，它考察的是每一个fact在迭代中的变化关系 *)
+Lemma steps_incr: 
   forall n s1 s2, steps s1 s2 ->
   optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n).
 Proof.
@@ -617,6 +631,27 @@ Proof.
   eapply GOOD2; eauto.
 Qed.
 
+(* Lemma steps_incr: 
+  forall n s1 s2, steps s1 s2 ->
+  optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n).
+Proof.
+  induction 1.
+- split. apply optge_refl. auto.
+- destruct IHsteps. exploit (step_incr n); eauto. intros [P Q].
+  split. eapply optge_trans; eauto. eauto.
+Qed. 
+Record good_state (st: state) : Prop := {
+  gs_stable: forall n,
+    st.(visited) n -> 
+    NS.In n st.(worklist) \/ 
+    (forall i s, 
+     code!n = Some i -> In s (successors i) ->
+     optge st.(aval)!s (Some (transf n (abstr_value n st))));
+  gs_defined: forall n v,
+    st.(aval)!n = Some v -> st.(visited) n
+}.
+*)
+
 (** 那么多步steps也就自然维持该性质了 *)
 Lemma steps_state_good:
   forall st1 st2, steps st1 st2 -> good_state st1 -> good_state st2.
@@ -705,7 +740,7 @@ Proof.
   }
   {
     (** 结点n不在worklist中，根据goodstate定义，直接就过了 *)
-    exploit P; eauto. unfold abstr_value; rewrite STN. intros OGE; inv OGE. auto.
+    exploit P; eauto. unfold abstr_value; rewrite STN. intros OGE. inv OGE. auto.
   }
 - (** n没有分析结果，qe成立也是显然的 *)
   apply L.ge_trans with L.bot. apply L.ge_bot. apply L.ge_refl. apply L.eq_sym. eauto.
@@ -770,6 +805,7 @@ Proof.
   inv OGE. assumption.
 Qed.
 
+Check step.
 (** ** Preservation of a property over solutions *)
 (** 这个还得再理解下... TODO *)
 Theorem fixpoint_invariant:
@@ -1676,4 +1712,3 @@ Module NodeSetBackward <: NODE_SET.
     code!n = Some instr -> In n (all_nodes code).
   Proof NodeSetForward.all_nodes_spec.
 End NodeSetBackward.
-

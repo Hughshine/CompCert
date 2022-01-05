@@ -79,6 +79,8 @@ Open Scope error_monad_scope.
 
 Module DS := Dataflow_Solver(LBoolean)(NodeSetForward).
 
+Print DS.step.
+
 Definition reachable_aux (f: LTL.function) : option (PMap.t bool) :=
   DS.fixpoint
     (LTL.fn_code f) successors_block
