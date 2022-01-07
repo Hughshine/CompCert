@@ -171,10 +171,11 @@ Section REACHABLE.
 
 Context {A: Type} (code: PTree.t A) (successors: A -> list positive).
 
+(** 这里的reachable不能保证可达链的最后一个处于code中 *)
 Inductive reachable: positive -> positive -> Prop :=
-  | reachable_refl: forall n, reachable n n  (** 自反这里，并不要求结点是在code 中的 *)
+  | reachable_refl: forall n, reachable n n  (** 自反这里，并不要求结点是在code 中的；结合reachable_left，也就是左结合时要求前驱在代码中（因为successor 是关于指令的函数，而不是关于positive的） *)
   | reachable_left: forall n1 n2 n3 i,
-      code!n1 = Some i -> In n2 (successors i) -> reachable n2 n3 ->
+      code!n1 = Some i -> In n2 (successors i) -> reachable n2 n3 -> 
       reachable n1 n3.
 
 Scheme reachable_ind := Induction for reachable Sort Prop.
@@ -193,7 +194,7 @@ Qed.
 Lemma reachable_right:
   forall n1 n2 n3 i,
   reachable n1 n2 -> code!n2 = Some i -> In n3 (successors i) ->
-  reachable n1 n3.
+  reachable n1 n3.  (** 这里其实也不能保证 n3在代码中 *)
 Proof.
   intros. apply reachable_trans with n2; auto. econstructor; eauto. constructor.
 Qed.
@@ -512,7 +513,9 @@ Inductive steps: state -> state -> Prop := (** step -> steps *)
 
 Scheme steps_ind := Induction for steps Sort Prop.  (** 这一步和Coq进行自动化推理的机制有关，需要看CoqArt中这部分，TODO*)
 
-(** 能得到结果，意味着算法会在执行有限步后停下，worklist为空*)
+(** 能得到结果，意味着算法会在执行有限步后停下，worklist为空
+    （最终返回的结果是只取了aval，但是取之前的state的性质还需要说明。）
+*)
 Lemma fixpoint_from_charact:
   forall start res,
   fixpoint_from start = Some res ->
@@ -588,25 +591,34 @@ Qed.
 
   The second part of the invariant shows that nodes that already have
   an abstract value associated with them have been visited. *)
-(** TODO: 思考什么不是good state，什么是goodstate，与每一个子操作的关系 *)
+(** stable 和 defined 分别关注两个方向，一个是“被访问过”与分析结果的关系，一个是有分析结果和“被访问过”的关系*)
+(** step做两件事：
+    1. poll entry
+    2. propagate new abstract value to successors  
+good state 的两个性质，stable 和worklist有关，它必须在两件事都做完才能维持；
+defined 是比较朴素地正确
+    * 似乎没有保证worklist和分析结果是统一的
+*)
 Record good_state (st: state) : Prop := {
+  (** 每一个被访问过的结点（被加入过worklist即被访问过），如果它此时不在worklist中，那么它相对于它的后继目前是有inequation关系的*)
   gs_stable: forall n,
     st.(visited) n -> 
-    (** 对于每个已经访问过的结点n *)
     NS.In n st.(worklist) \/ 
-    (** 它或者在worklist中 *)
     (forall i s, 
      code!n = Some i -> In s (successors i) ->
-    (** 若不在worklist中，则它的每个后继都和它都有inequation关系，
-        即，ge In(s) Out(n) 
-    *)
      optge st.(aval)!s (Some (transf n (abstr_value n st))));
+  (** 如果某个结点有分析结果，那么它一定被访问过（加入过worklist） *)  (** 但是visited 不一定有结果 *)
   gs_defined: forall n v,
-    st.(aval)!n = Some v -> st.(visited) n
+    st.(aval)!n = Some v -> st.(visited) n 
 }.
 
 (** We show that the [step] function preserves this invariant. *)
-(** step维持good_state invariant *)
+(** step维持good_state invariant（这里没有显式的step，但实际已经是了：取出一个元素，然后propagate_succ_list） 
+    也就是 good state st -> step st = st' -> good state st'
+    step_state_good 是在说 取出来的结点在code中的情况，也就是正常情况（worklist entry是不是在successor这是不确定的，也就是code和successor似乎是没有建立关系的）
+    step_state_good_2 是在说 取出来的结点不再code中，也就是step的另一个分支
+    两个合起来，就是完整的 step good state
+*)
 Lemma step_state_good:
   forall st pc rem instr,
   NS.pick st.(worklist) = Some (pc, rem) ->
@@ -685,7 +697,7 @@ Record good_state (st: state) : Prop := {
 }.
 *)
 
-(** 那么多步steps也就自然维持该性质了 *)
+(** 知道step_state_good, steps也就知道了 *)
 Lemma steps_state_good:
   forall st1 st2, steps st1 st2 -> good_state st1 -> good_state st2.
 Proof.
@@ -726,7 +738,7 @@ Proof.
 Qed.
 
 (** Reachability in final states. *)
-Check reachable.
+(** 这个应该是配合fixpoint_charact使用的 *)
 Lemma reachable_visited:
   forall st, good_state st -> NS.pick st.(worklist) = None ->
   (** 对于每一个worklist为空的goodstate *)
