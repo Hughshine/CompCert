@@ -81,6 +81,7 @@ Module Type DATAFLOW_SOLVER.
            (transf: positive -> L.t -> L.t)
            (ep: positive) (ev: L.t),
     option (PMap.t L.t).
+    Compute fixpoint.
 
   (** The [fixpoint_solution] theorem shows that the returned solution,
     if any, satisfies the dataflow inequations. *)
@@ -126,21 +127,37 @@ End DATAFLOW_SOLVER.
 
 Module Type NODE_SET. (** pick 的方式由 NODESET 自行决定，它并不影响正确性，只影响效率*)
 
-  Parameter t: Type.
-  Parameter empty: t.
-  Parameter add: positive -> t -> t.
+  (** 实现NODE_SET的抽象的数据类型 *)
+  Parameter t: Type. 
+  (** 该类型有一个常量empty，它满足empty_spec, 即empty中不存在任何node*)
+  Parameter empty: t. 
+  (** 对node set增加一个结点的操作，满足add_spec，即若增加一个结点n后，可以在里面找到结点n'，那么或者n'是刚刚被加入的结点n，或者n'加入前就存在；反向也成立*)
+  Parameter add: positive -> t -> t. 
+  (** 返回结点的标号，与结果的node set. 新的node set的元素不比之前的多. 被pick出来的结点在之前存在. 
+  （允许pick是contains的实现）*)
   Parameter pick: t -> option (positive * t).
+  (** 将code所有结点加入nodeset; 不保证加了更多的结点 *)
   Parameter all_nodes: forall {A: Type}, PTree.t A -> t.
 
   Parameter In: positive -> t -> Prop.
   Axiom empty_spec:
     forall n, ~In n empty.
+
+  (** 为什么这样子定义add_spec还不清楚，可能这样子就是归纳式的定义了；
+      应该是要将任意的In 和 刚add的结点 之间创立关系*)
   Axiom add_spec:
     forall n n' s, In n' (add n s) <-> n = n' \/ In n' s.
+  
+  (** pick n的结果，与 In n 的关系*)
   Axiom pick_none:
-    forall s n, pick s = None -> ~In n s.
+    forall s n, pick s = None -> ~In n s. (** TODO: 为什么没有反向 *)
+
+  (** pick 之前的set 与 pick 之后 set的关系：除了被pick出的那个元素，别的元素都在新的集合里；被pick的那个元素，和新集合中所有的元素，也都在之前的集合里*)
+  (** 但是没有说，pick的元素，就不会再pick 到了，这会不会影响单调性... 进一步是算法的终止性... TODO 
+      或者可能就是不需要那么强吧.... 
+  *)
   Axiom pick_some:
-    forall s n s', pick s = Some(n, s') ->
+    forall s n s', pick s = Some(n, s') -> 
     forall n', In n' s <-> n = n' \/ In n' s'.
   Axiom all_nodes_spec:
     forall A (code: PTree.t A) n instr,
@@ -155,7 +172,7 @@ Section REACHABLE.
 Context {A: Type} (code: PTree.t A) (successors: A -> list positive).
 
 Inductive reachable: positive -> positive -> Prop :=
-  | reachable_refl: forall n, reachable n n
+  | reachable_refl: forall n, reachable n n  (** 自反这里，并不要求结点是在code 中的 *)
   | reachable_left: forall n1 n2 n3 i,
       code!n1 = Some i -> In n2 (successors i) -> reachable n2 n3 ->
       reachable n1 n3.
@@ -170,6 +187,9 @@ Proof.
 - econstructor; eauto.
 Qed.
 
+(** TODO: 注意这里从code取某个结点的操作，是直接 = Some i.
+    因为reachable n1 n2 并不能保证code!n2 不是None.
+*)
 Lemma reachable_right:
   forall n1 n2 n3 i,
   reachable n1 n2 -> code!n2 = Some i -> In n3 (successors i) ->
@@ -183,6 +203,8 @@ End REACHABLE.
 (** We now define a generic solver for forward dataflow inequations
   that works over any semi-lattice structure. *)
 
+(** 一个Solver被实例化，需要Fact的类型（即LAT），一个结点集合的实现类型（自行确定遍历方式） *)
+(** 它需要证明自己满足Module Type里定义的那些公理 *)
 Module Dataflow_Solver (LAT: SEMILATTICE) (NS: NODE_SET) <:
                           DATAFLOW_SOLVER with Module L := LAT.
 
@@ -200,6 +222,7 @@ Variable transf: positive -> L.t -> L.t.
   the candidate solution found so far.
 - [worklist]: A worklist of program points that remain to be considered.
 - [visited]: A set of program points that were visited already (** TODO: visited 这里究竟在证明中起到什么作用？ *)
+  visited: 某个结点加入过worklist（而不是被poll过）
   (i.e. put on the worklist at some point in the past).
 
 Only the first two components are computationally relevant.  The third
@@ -248,19 +271,21 @@ Definition abstr_value (n: positive) (s: state) : L.t :=
 (** [propagate_succ] corresponds, in the pseudocode,
   to the body of the [for] loop iterating over all successors. *)
 
+(** 能走到这里的结点n，都是在cfg上的【在输入结点都是cfg中结点的前提下】；
+    TODO，问，算法是怎么处理输入不在cfg的情况的？【这部分性质，应该不是propagate_succ去关心的】*)
 Definition propagate_succ (s: state) (out: L.t) (n: positive) :=
   match s.(aval)!n with
   | None =>
-      {| aval := PTree.set n out s.(aval);
-         worklist := NS.add n s.(worklist);
-         visited := fun p => p = n \/ s.(visited) p |}
+      {| aval := PTree.set n out s.(aval);  (** 之前没记录过这个后继节点的结果，那么n的out就是这个结点的in*)
+         worklist := NS.add n s.(worklist); 
+         visited := fun p => p = n \/ s.(visited) p |}  (** 算作该结点已经加入过worklist *)
   | Some oldl =>
       let newl := L.lub oldl out in
       if L.beq oldl newl
       then s
       else {| aval := PTree.set n newl s.(aval);
               worklist := NS.add n s.(worklist);
-              visited := fun p => p = n \/ s.(visited) p |}
+              visited := fun p => p = n \/ s.(visited) p |} (** 算作该结点已经加入过worklist *)
   end.
 
 (** [propagate_succ_list] corresponds, in the pseudocode,
@@ -276,18 +301,19 @@ Fixpoint propagate_succ_list (s: state) (out: L.t) (succs: list positive)
 (** [step] corresponds to the body of the outer [while] loop in the
   pseudocode. *)
 
+(** step 不影响aval，只是会将worklist改成rem  *)
 Definition step (s: state) : PMap.t L.t + state :=
   match NS.pick s.(worklist) with
   | None =>
-      inl _ (L.bot, s.(aval)) (** 由PTree构造PMap, 后者比前者就差一个default... *)
-  | Some(n, rem) =>
-      match code!n with
-      | None => (** 就当作这个node不在，不应该走这个分支 *)
+      inl _ (L.bot, s.(aval)) (** 由PTree构造PMap, 后者比前者就多一个default... *)
+  | Some(n, rem) => (** 一般迭代过程 *)
+      match code!n with   
+      | None => (** 若查不到该节点，当作它不存在 *)
           inr _ {| aval := s.(aval); worklist := rem; visited := s.(visited) |}
-      | Some instr => (** *)
+      | Some instr => (** 根据自己的in（应当是存在的），算出out，试着propagate到每个后继 *)
           inr _ (propagate_succ_list
                   {| aval := s.(aval); worklist := rem; visited := s.(visited) |}
-                  (transf n (abstr_value n s))
+                  (transf n (abstr_value n s))  
                   (successors instr))
       end
   end.
@@ -296,7 +322,7 @@ Definition step (s: state) : PMap.t L.t + state :=
   an initial state. *)
 
 Definition fixpoint_from (start: state) : option (PMap.t L.t) :=
-  PrimIter.iterate _ _ step start.
+  PrimIter.iterate _ _ step start.  (** 迭代上限是在Iter.v定义的，一个很大的positive *)
 
 (** There are several ways to build the initial state.  For forward
   dataflow analyses, the initial worklist is the function entry point,
@@ -305,9 +331,11 @@ Definition fixpoint_from (start: state) : option (PMap.t L.t) :=
   corresponds to [L.bot] initial abstract values. *)
 
 Definition start_state (enode: positive) (eval: L.t) :=
-  {| aval := PTree.set enode eval (PTree.empty L.t);
-     worklist := NS.add enode NS.empty;
-     visited := fun n => n = enode |}.
+  {| aval := PTree.set enode eval (PTree.empty L.t);  
+  (** 并不检查entry node是否在code中，直接set它的下限分析结果（应该一定是L.bot? ）*)
+  (** 并将它加入worklist（visited也同步记录） *)
+    worklist := NS.add enode NS.empty;
+    visited := fun n => n = enode |}.
 
 Definition fixpoint (enode: positive) (eval: L.t) :=
   fixpoint_from (start_state enode eval).
@@ -321,14 +349,14 @@ Definition fixpoint (enode: positive) (eval: L.t) :=
   initializes the worklist with all program points of the given CFG. *)
 
 Definition start_state_nodeset (enodes: NS.t) :=
-  {| aval := PTree.empty L.t;
+  {| aval := PTree.empty L.t;  (** 对于用一堆enodes做初始化的情况，没有去理会aval，可能是无所谓吧.. 因为从result会最后取出默认值？ ==> fixpoint_entry要求的是enode，而不是enodes【也就是好像没有fixpoint_nodeset_entries】，这里会怎么被处理，TODO*)
      worklist := enodes;
      visited := fun n => NS.In n enodes |}.
 
-Definition fixpoint_nodeset (enodes: NS.t) :=
+Definition fixpoint_nodeset (enodes: NS.t) := 
   fixpoint_from (start_state_nodeset enodes).
 
-Definition start_state_allnodes :=
+Definition start_state_allnodes :=  (** *_nodeset和 code 无关，allnodes和code有关（将所有code中的结点加入）*)
   {| aval := PTree.empty L.t;
      worklist := NS.all_nodes code;
      visited := fun n => exists instr, code!n = Some instr |}.
@@ -362,10 +390,12 @@ Proof.
   intros. unfold abstr_value. inv H. auto. apply L.ge_bot.
 Qed.
 
+
+(** propagate_succ 做的事情：根据前驱节点的out，尝试改变aval[n]（涉及aval和visited两处修改）*)
 Lemma propagate_succ_charact:
   forall st out n,
-  let st' := propagate_succ st out n in
-     optge st'.(aval)!n (Some out)  (** 这个程序点的AI单调（相对于一个前驱的out） *)
+  let st' := propagate_succ st out n in 
+     optge st'.(aval)!n (Some out)  (** 这个程序点的AI单调（相对于一个前驱的out）*)
   /\ (forall s, n <> s -> st'.(aval)!s = st.(aval)!s)  (** 只影响这一个节点 *)
   /\ (forall s, optge st'.(aval)!s st.(aval)!s) (** 每个程序点的AI单调（相对于它以前） *)
   /\ (NS.In n st'.(worklist) \/ st'.(aval)!n = st.(aval)!n) (** 这个节点或者在worklist，或者它没有发生改变 *)
@@ -482,6 +512,7 @@ Inductive steps: state -> state -> Prop := (** step -> steps *)
 
 Scheme steps_ind := Induction for steps Sort Prop.  (** 这一步和Coq进行自动化推理的机制有关，需要看CoqArt中这部分，TODO*)
 
+(** 能得到结果，意味着算法会在执行有限步后停下，worklist为空*)
 Lemma fixpoint_from_charact:
   forall start res,
   fixpoint_from start = Some res ->
@@ -512,6 +543,7 @@ evolve monotonically:
     通过steps start得到了这个最后状态，它的worklist为空，res来源于这个状态的分析结果。【描述了开始状态和最终状态的样子】
     现在要尝试建立两者间的关系（主要是（每一个fact）分析结果的evolve）：通过说明step的性质 *)
 (** 1. 单步step的单调性 *)
+(** 先推理一个简单的性质：状态中每一个节点的相关信息，在（单步）step前后的关系（单调） *)
 Lemma step_incr:
   forall n s1 s2, step s1 = inr s2 ->
   optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n). (** aval 一定会变大*)
@@ -532,6 +564,7 @@ Proof.
 Qed.
 
 (** 2. 多步steps的单调性，它考察的是每一个fact在迭代中的变化关系 *)
+(** 先推理一个简单的性质：状态中每一个节点的相关信息，在（多步）steps前后的关系（单调） *)
 Lemma steps_incr: 
   forall n s1 s2, steps s1 s2 ->
   optge s2.(aval)!n s1.(aval)!n /\ (s1.(visited) n -> s2.(visited) n).
@@ -555,7 +588,7 @@ Qed.
 
   The second part of the invariant shows that nodes that already have
   an abstract value associated with them have been visited. *)
-
+(** TODO: 思考什么不是good state，什么是goodstate，与每一个子操作的关系 *)
 Record good_state (st: state) : Prop := {
   gs_stable: forall n,
     st.(visited) n -> 
