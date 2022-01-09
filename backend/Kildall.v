@@ -515,6 +515,7 @@ Scheme steps_ind := Induction for steps Sort Prop.  (** 这一步和Coq进行自
 
 (** 能得到结果，意味着算法会在执行有限步后停下，worklist为空
     （最终返回的结果是只取了aval，但是取之前的state的性质还需要说明。）
+    将最后的结果转化成state的形式，
 *)
 Lemma fixpoint_from_charact:
   forall start res,
@@ -607,7 +608,7 @@ Record good_state (st: state) : Prop := {
     (forall i s, 
      code!n = Some i -> In s (successors i) ->
      optge st.(aval)!s (Some (transf n (abstr_value n st))));
-  (** 如果某个结点有分析结果，那么它一定被访问过（加入过worklist） *)  (** 但是visited 不一定有结果 *)
+  (** 如果某个结点有分析结果，那么它一定被访问过（加入过worklist） *)  (** 但是visited 不一定有结果；初始化时不一定给了它结果 *)
   gs_defined: forall n v,
     st.(aval)!n = Some v -> st.(visited) n 
 }.
@@ -629,17 +630,49 @@ Lemma step_state_good:
                                   (successors instr)).
 Proof.
   intros until instr; intros PICK CODEAT [GOOD1 GOOD2].
-  generalize (NS.pick_some _ _ _ PICK); intro PICK2.
+  (* 
+  pick_some: 
+  forall s n s', pick s = Some(n, s') ->
+  forall n', In n' s <-> n = n' \/ In n' s'. *)
+  pose proof (NS.pick_some _ _ _ PICK) as PICK2.
+  (* generalize (NS.pick_some _ _ _ PICK). intro PICK2. *)
   set (out := transf pc (abstr_value pc st)).
   generalize (propagate_succ_list_charact out (successors instr) {| aval := aval st; worklist := rem; visited := visited st |}).
   set (st' := propagate_succ_list {| aval := aval st; worklist := rem; visited := visited st |} out
                                   (successors instr)).
   simpl; intros (A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 & A9).
-  constructor; intros.
+  (** 将前提全部拆解开（propagate_succ_list，good_state st => GOOD1 GOOD2），去证good_state st'两个条件 *)
+  constructor. 
 - (* stable *)
-  destruct (A8 n H); auto. destruct (A4 n); auto.
+  (** 
+      上一次迭代后，所有的（visited）结点，或者在worklist中，或者其out与后继满足inequation；我们想证明，新的一次迭代后，visited结点（会有一些新的），仍然或在worklist中，或者与后继满足inequation（这一次迭代，从worklist中拿走了一个结点，更新了一波后继，并按需加入了worklist）
+  *)
+  intros.
+  destruct (A8 n H); auto. destruct (A4 n). auto. 
+  (** 对n的可能状态分类讨论：【A4】
+      1. n可能在新的worklist中（可能迭代前就在、可能是新加入的，但无所谓），这种节点直接 trivially stable
+      2. 也可能不在（那么它需要满足inequation）【propagate_succ_list保证对于没有新加入worklist的结点，分析结果不变【存在即一致，或者不存在】】
+      （goal中还有n, 因为 Coq 是constructive的... 不选择左边的条件，不意味着neg左边的条件为真）
+      效果只是相当于引入了一个新的条件：结点迭代前后的分析结果一致
+  *) 
   replace (abstr_value n st') with (abstr_value n st)
   by (unfold abstr_value; rewrite H1; auto).
+  (** 我们现在知道，在st时，结点n与每个后继都满足inequation，即
+      optge (aval st) ! s (Some (transf n (abstr_value n st))))
+      现在我们要证
+      optge (aval st') ! s (Some (transf n (abstr_value n st))))
+      直觉：因为(aval st) ! s的单调性，所以自然就继续成立... 
+      重新讨论n，n在st.worklist，也可能不在、转而满足inequation【注意，每一次迭代，不改变n的分析结果，只改变其后继的分析结果】
+      1. n \in st.worklist
+         1. 讨论n是不是被poll出来的结点
+            *. 如果不是，那么它就会在st'.worklist（根据A5），也就符合了stable要求
+            *. 如果是，那么这一次的迭代，会把更新n的后继，使得所有的后继与n满足inequation关系
+      2. n 不在st.worklist，那么它在st和后继是具有inequation关系的
+         1. 我们想说，它和后继仍然有inequation关系
+            *. 对于它的每个后继，propagate_succ_list只会让它变得比以前更大，而这一步不改变n的分析结果
+            *. 自然维持了
+
+  *)
   exploit GOOD1; eauto. intros [P|P].
 + (* n was on the worklist *)
   rewrite PICK2 in P; destruct P.
@@ -650,8 +683,17 @@ Proof.
   * (* n was already on the worklist *)
     left. apply A5; auto.
 + (* n was stable before, still is *)
-  right; intros. apply optge_trans with st.(aval)!s; eauto.
-- (* defined *)
+  right. intros. apply optge_trans with st.(aval)!s. eapply A3. eapply P; eauto. 
+- (* defined *)  
+  (**
+    想要证明结点n在st'若有分析结果，那么一定st'.visited n. 
+    结点n在st可能有或没有分析结果 
+      1. 对于good_state，有分析结果，一定被visited过（st.visited n）. 
+          * propagate_succ_list 保持visited（A7） => st'.visited n
+      2. 如果之前没有分析结果，但是新出现了分析结果，propagate_succ_list一定会同步设置它的visited
+          * A9
+  *)
+  intros.
   destruct st.(aval)!n as [v'|] eqn:ST.
   + apply A7. eapply GOOD2; eauto.
   + apply A9; auto. congruence.
@@ -667,8 +709,18 @@ Proof.
   intros until rem; intros [GOOD1 GOOD2] PICK CODE.
   generalize (NS.pick_some _ _ _ PICK); intro PICK2.
   constructor; simpl; intros.
+  (** 要证明：只去掉st.worklist中一个与代码无关的结点，得到状态st'，它还是stable/defined，也就是对于任意结点，其分析结果与后继满足inequation（不在worklist）或者在worklist，并且记录了它的visited 
+      下面就是要对任意结点n进行讨论
+  *)
 - (* stable *)
   exploit GOOD1; eauto. intros [P | P].
+  (** st 是good state，把这个信息拆开.
+      关于stable，一个结点n可能在st.worklist也可能不在（st的信息是一个\/），分类讨论
+      1. 如果在，n可能是被poll出来的结点，也可能不是
+        1. 如果不是，st'中满足stable的在worklist的条件
+        2. 如果是，（我们会把它丢弃）我们进一步说明把它丢弃不影响关于它的inequation（stable中inequation部分只关心code中存在的代码）
+      2. 如果不在，那么这个结点在st便成立的inequation，st'没有修改aval，所以仍然成立（st'中也满足stable的inequation条件）
+  *)
   + rewrite PICK2 in P. destruct P; auto.
     subst n. right; intros. congruence.
   + right; exact P.
@@ -738,7 +790,7 @@ Proof.
 Qed.
 
 (** Reachability in final states. *)
-(** 这个应该是配合fixpoint_charact使用的 *)
+(** 这个应该是配合fixpoint_charact使用的；不过只用于了fixpoint_nodeset *)
 Lemma reachable_visited:
   forall st, good_state st -> NS.pick st.(worklist) = None ->
   (** 对于每一个worklist为空的goodstate *)
@@ -764,11 +816,15 @@ Theorem fixpoint_solution:
   forall ep ev res n instr s,
   fixpoint ep ev = Some res ->
   (** 算法最后的结果res *)
-  code!n = Some instr ->
-  In s (successors instr) ->
+  code!n = Some instr -> (** 由于instr可能dead，st.aval!n可以为None *)
+  In s (successors instr) -> (** code!s甚至可以不存在 *)
   (** 关于每一个结点n和它的后继s *)
-  (forall n, L.eq (transf n L.bot) L.bot) ->  (** 这一条其实不太理解 *)
-  L.ge res!!s (transf n res!!n).
+  (forall n, L.eq (transf n L.bot) L.bot) ->  
+  (** 为了证明方便额外引入的限制，主要用来处理outlier部分的证明。
+      很容易拓展一个任意的格，有一个额外的bot，使其在transf下不变，并且在meet时，变成另一个. 分析结果包含的都是entry reachable的，但是几个正确性也都考虑unreachable node
+      去掉的话，这个定理的证明思路要变了，不能直接destruct
+  *)
+  L.ge res!!s (transf n res!!n).  (** devils in details.... 这里的n可能dead，得到out的方式还是重新算一次transf... 于是就让Lat多一个默认的Bot吧（在需要的时候）... *)
   (** 都有inequation关系 *)
 Proof.
   unfold fixpoint; intros.
@@ -776,19 +832,21 @@ Proof.
   exploit steps_state_good; eauto. apply start_state_good.  intros [GOOD1 GOOD2]. (** 把所有已知条件、定理应用，展开 *)
   (** 只需要证inequation: L.ge res !! s (transf n res !! n) *)
   rewrite RES; unfold PMap.get; simpl.  (** res表示转换，PMap -> PTree *)
-  destruct st.(aval)!n as [v|] eqn:STN.  (** 对n点分析结果直接分类讨论，（其实应该一定存在这一点的结果的？），如果该点结果存在，直接拿出来，如果不存在，用L.bot作为默认；讨论两个分支 *)
+  destruct st.(aval)!n as [v|] eqn:STN. 
+  (** 对n点分析结果直接分类讨论，如果该点结果存在，直接拿出来，如果不存在，用L.bot作为默认；讨论两个分支 *)
 - (** n有分析结果v *)
-  destruct (GOOD1 n) as [P|P]. eauto.  (** case analysis on (GOOD1 n) *)
+  destruct (GOOD1 n) as [P|P]. eauto.  (** 对stable n两种情况的讨论 *)
   { (** 如果结点n在worklist中 *)
-    (** 应该是想说明终止了的程序，worklist一定为空？然后关闭这个分支？TODO *) 
+    (** 此时worklist为空，不可能*) 
     eelim NS.pick_none; eauto. 
   }
   {
-    (** 结点n不在worklist中，根据goodstate定义，直接就过了 *)
+    (** 结点n不在worklist中，也就是结点n和后继满足inequation关系.
+    *)
     exploit P; eauto. unfold abstr_value; rewrite STN. intros OGE. inv OGE. auto.
   }
-- (** n没有分析结果，qe成立也是显然的 *)
-  apply L.ge_trans with L.bot. apply L.ge_bot. apply L.ge_refl. apply L.eq_sym. eauto.
+- (** n没有分析结果，由于对transf做了特殊要求，使其L.bot特殊，这个corner case也就被处理了 *)
+apply L.ge_trans with L.bot. apply L.ge_bot. apply L.ge_refl. apply L.eq_sym. eauto.
 Qed.
 
 (** Moreover, the result of [fixpoint], if defined, satisfies the additional
