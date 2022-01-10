@@ -81,8 +81,7 @@ Module Type DATAFLOW_SOLVER.
            (transf: positive -> L.t -> L.t)
            (ep: positive) (ev: L.t),
     option (PMap.t L.t).
-    Compute fixpoint.
-
+    
   (** The [fixpoint_solution] theorem shows that the returned solution,
     if any, satisfies the dataflow inequations. *)
 
@@ -241,8 +240,9 @@ Definition abstr_value (n: positive) (s: state) : L.t :=
   | None => L.bot
   | Some v => v
   end.
-(** TODO: 不同定理对最终的正确性究竟的贡献是什么？ 为什么要这么拆解？ *)
-(** TODO: transf function在solver的正确性中究竟有何种意义？
+(** TODO: transf function在solver里完全没有存在感. 因为不关心是否终止. 
+(** 这里的worklist中entry的含义，是数据流往下传播的node（node本身的In已经正确了），它要尝试把自己的数据传播到后继，如果后继的in变了，加入这个后继到worklist；一次只涉及一个前驱和后继... *)
+    (** 课上学的imperative的算法，entry的node，是In需要但还没有被正确更新的node（意味着out有可能变）（In要根据所有前驱的out重新算）；如果改变了，会加入所有后继到worklist *)
     如果我要改成block based：
     1. 我要提供什么形式的结果？
     2. transf function 需要如何调整？ 需要满足什么？
@@ -860,7 +860,7 @@ Proof.
   unfold fixpoint; intros.
   exploit fixpoint_from_charact; eauto. intros (st & STEPS & PICK & RES).
   exploit (steps_incr ep); eauto. simpl. rewrite PTree.gss. intros [P Q].
-  rewrite RES; unfold PMap.get; simpl. inv P; auto.
+  rewrite RES; unfold PMap.get; simpl. inv P. auto.
 Qed.
 
 (** For [fixpoint_allnodes], we show that the result is a solution
