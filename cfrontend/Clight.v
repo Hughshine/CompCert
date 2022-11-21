@@ -62,6 +62,10 @@ Inductive expr : Type :=
   | Esizeof: type -> type -> expr         (**r size of a type *)
   | Ealignof: type -> type -> expr.       (**r alignment of a type *)
 
+(** Csyntax, array access *)
+(* Definition Eindex (r1 r2: expr) (ty: type) :=
+  Ederef (Ebinop Oadd r1 r2 (Tpointer ty noattr)) ty. *)
+
 (** Extract the type part of a type-annotated Clight expression. *)
 
 Definition typeof (e: expr) : type :=
