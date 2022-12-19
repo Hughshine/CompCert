@@ -27,6 +27,9 @@ Require Import Memory.
 Require Import Globalenvs.
 Require Import Builtins.
 
+(** Backwards compatibility for Hint Rewrite locality attributes. *)
+Set Warnings "-unsupported-attributes".
+
 (** * Events and traces *)
 
 (** The observable behaviour of programs is stated in terms of
@@ -113,6 +116,7 @@ Proof.
   induction t1; intros; simpl. auto. decEq; auto.
 Qed.
 
+#[global]
 Hint Rewrite E0_left E0_right Eapp_assoc
              E0_left_inf Eappinf_assoc: trace_rewrite.
 
@@ -198,7 +202,7 @@ Next Obligation.
   elimtype False. elim NE. auto.
 Qed.
 Next Obligation.
-  red; intro. elim (H e). rewrite H0. auto.
+  red; intro; subst; intuition eauto.
 Qed.
 
 CoFixpoint traceinf_of_traceinf' (T': traceinf') : traceinf :=

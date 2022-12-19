@@ -39,9 +39,9 @@ Require Import Zwf.
 Require Import Axioms Coqlib Errors Maps AST Linking.
 Require Import Integers Floats Values Memory.
 
+Declare Scope pair_scope.
 Notation "s #1" := (fst s) (at level 9, format "s '#1'") : pair_scope.
 Notation "s #2" := (snd s) (at level 9, format "s '#2'") : pair_scope.
-
 Local Open Scope pair_scope.
 Local Open Scope error_monad_scope.
 
@@ -265,15 +265,6 @@ Qed.
 
 Program Definition empty_genv (pub: list ident): t :=
   @mkgenv pub (PTree.empty _) (PTree.empty _) 1%positive _ _ _.
-Next Obligation.
-  rewrite PTree.gempty in H. discriminate.
-Qed.
-Next Obligation.
-  rewrite PTree.gempty in H. discriminate.
-Qed.
-Next Obligation.
-  rewrite PTree.gempty in H. discriminate.
-Qed.
 
 Definition globalenv (p: program F V) :=
   add_globals (empty_genv p.(prog_public)) p.(prog_defs).

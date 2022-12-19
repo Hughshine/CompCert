@@ -893,13 +893,9 @@ Qed.
 Lemma static_bool_val_sound:
   forall v t m b, bool_val v t Mem.empty = Some b -> bool_val v t m = Some b.
 Proof.
-  assert (A: forall b ofs, Mem.weak_valid_pointer Mem.empty b ofs = false).
-  { unfold Mem.weak_valid_pointer, Mem.valid_pointer, proj_sumbool; intros.
-    rewrite ! pred_dec_false by (apply Mem.perm_empty). auto. }  
   intros until b; unfold bool_val.
-  destruct (classify_bool t); destruct v; destruct Archi.ptr64 eqn:SF; auto.
-- rewrite A; congruence.
-- simpl; rewrite A; congruence.
+  destruct (classify_bool t); destruct v; destruct Archi.ptr64 eqn:SF; auto;
+  simpl; congruence.
 Qed.
 
 Lemma step_makeif:
@@ -1615,7 +1611,7 @@ Ltac NOTIN :=
   apply push_seq. reflexivity. reflexivity.
   rewrite <- Kseqlist_app.
   eapply match_exprstates; eauto.
-  apply S. apply tr_paren_set with (a1 := a2) (t := sd_temp sd); auto.
+  apply S. apply tr_paren_set with (a1 := a2) (t := t); auto.
   apply tr_expr_monotone with tmp2; eauto. auto. auto.
 - (* seqand false *)
   exploit tr_top_leftcontext; eauto. clear TR.
@@ -1724,7 +1720,7 @@ Ltac NOTIN :=
   apply push_seq. reflexivity. reflexivity.
   rewrite <- Kseqlist_app.
   eapply match_exprstates; eauto.
-  apply S. apply tr_paren_set with (a1 := a2) (t := sd_temp sd); auto.
+  apply S. apply tr_paren_set with (a1 := a2) (t := t); auto.
   apply tr_expr_monotone with tmp2; eauto. auto. auto.
 - (* condition *)
   exploit tr_top_leftcontext; eauto. clear TR.
