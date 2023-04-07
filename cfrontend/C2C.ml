@@ -470,7 +470,7 @@ let rec convertTyp env ?bitwidth t =
                 convertTyp env tres,
                 convertCallconv tres targs va a)
   | C.TNamed _ ->
-      convertTyp env (Cutil.unroll env t)
+      convertTyp env ?bitwidth (Cutil.unroll env t)
   | C.TStruct(id, a) ->
       Ctypes.Tstruct(intern_string id.name, convertAttr a)
   | C.TUnion(id, a) ->
@@ -930,8 +930,8 @@ let rec convertExpr env e =
   | C.ECall({edesc = C.EVar {name = "__builtin_va_arg"}}, [arg1; arg2]) ->
       make_builtin_va_arg env (convertTyp env e.etyp) (convertExpr env arg1)
 
-  | C.ECall({edesc = C.EVar {name = "__builtin_va_end"}}, _) ->
-      Ecast (ezero, Tvoid)
+  | C.ECall({edesc = C.EVar {name = "__builtin_va_end"}}, [arg]) ->
+      Ecast (convertExpr env arg, Tvoid)
 
   | C.ECall({edesc = C.EVar {name = "__builtin_va_copy"}}, [arg1; arg2]) ->
       let dst = convertExpr env arg1 in
